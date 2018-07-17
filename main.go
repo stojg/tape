@@ -28,7 +28,8 @@ func main() {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	err = buildPackage("site", os.Args[2], files)
+
+	err = buildPackage(filepath.Base(os.Args[1]), os.Args[2], files)
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
