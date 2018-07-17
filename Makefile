@@ -13,4 +13,4 @@ compile:
 	GOARM=7 GOARCH=arm GOOS=linux go build -o ./build/${BINARY}_arm ${LDFLAGS} .
 
 clean:
-	if [ -f ./build ] ; then rm -rf ./build ; fi
+	if [ -d ./build ] ; then rm -rf ./build ; fi
