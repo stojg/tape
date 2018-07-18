@@ -14,6 +14,10 @@ import (
 	"io"
 )
 
+var (
+	version string
+)
+
 type FileStat struct {
 	src  string
 	path string
@@ -23,6 +27,7 @@ type FileStat struct {
 }
 
 func main() {
+	fmt.Printf("Tape %s\n", version)
 
 	if len(os.Args) != 3 {
 		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz\n", os.Args[0]))
@@ -54,6 +59,8 @@ func main() {
 	if s3URL.Host == "" {
 		fatalErr(fmt.Errorf("S3Uri is missing bucket name"))
 	}
+
+	fmt.Printf("Uploading %s as a compressed tar to %s\n", src, s3URL)
 
 	region, err := s3manager.GetBucketRegion(context.Background(), sess, s3URL.Host, "ap-southeast-2")
 	if err != nil {

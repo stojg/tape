@@ -1,4 +1,5 @@
-LDFLAGS=-ldflags "-s -w"
+VERSION=`git describe --tags`
+LDFLAGS=-ldflags "-s -w -X main.version=${VERSION}"
 BINARY=tape
 
 all:
