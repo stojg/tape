@@ -12,6 +12,9 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"context"
 	"io"
+	"time"
+	"github.com/silverstripeltd/ssp-sdk-go/ssp"
+	"strings"
 )
 
 var (
@@ -29,13 +32,24 @@ type FileStat struct {
 func main() {
 	fmt.Printf("Tape %s\n", version)
 
-	if len(os.Args) != 3 {
-		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz\n", os.Args[0]))
+	if len(os.Args) != 4 {
+		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
 	}
 
 	src, err := filepath.Abs(os.Args[1])
 	if err != nil {
 		fatalErr(err)
+	}
+
+	dashboardURL, err := url.Parse(os.Args[3])
+	if err != nil {
+		fatalErr(err)
+	}
+
+	dParts := strings.Split(strings.Trim(dashboardURL.Path, "/"), "/")
+	if len(dParts) != 5 {
+		fmt.Println(len(dParts), dParts);
+		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
 	}
 
 	packagePrefix := filepath.Base(src)
@@ -81,10 +95,42 @@ func main() {
 		}
 	}()
 
-	err = upload(reader, s3URL, region)
+	preSignedURL, err := upload(reader, s3URL, region)
 	if err != nil {
 		fatalErr(err)
 	}
+
+	if err := createDeployment(dashboardURL.Scheme, dashboardURL.Host, dParts[2], dParts[4], preSignedURL); err != nil {
+		fatalErr(err)
+	}
+}
+
+func createDeployment(scheme, host, stack, env, packageURL string) error {
+	client, err := ssp.NewClient(&ssp.Config{
+		Email:   os.Getenv("DASHBOARD_USER"),
+		Token:   os.Getenv("DASHBOARD_TOKEN"),
+		BaseURL: fmt.Sprintf("%s://%s", scheme, host),
+	})
+	if err != nil {
+		return err
+	}
+
+	dep, err := client.CreateDeployment(stack, env, &ssp.CreateDeployment{
+		Ref:     packageURL,
+		RefType: "package",
+		Title:   "My test",
+		Summary: "very deploy, much nice",
+		Options: []string{""},
+		Bypass:  false,
+	})
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(dep)
+
+	return nil
 }
 
 func fatalErr(err error) {
@@ -92,7 +138,7 @@ func fatalErr(err error) {
 	os.Exit(1)
 }
 
-func upload(source io.Reader, dest *url.URL, awsRegion string) error {
+func upload(source io.Reader, dest *url.URL, awsRegion string) (string, error) {
 
 	contentType := "application/x-tgz"
 
@@ -100,9 +146,9 @@ func upload(source io.Reader, dest *url.URL, awsRegion string) error {
 		Region: aws.String(awsRegion),
 	}))
 
-	srv  := s3.New(sess)
+	svc := s3.New(sess)
 	// Create an uploader (can do multipart) with S3 client and default options
-	uploader := s3manager.NewUploaderWithClient(srv)
+	uploader := s3manager.NewUploaderWithClient(svc)
 	params := &s3manager.UploadInput{
 		Bucket:      aws.String(dest.Host),
 		Key:         aws.String(dest.Path),
@@ -114,14 +160,24 @@ func upload(source io.Reader, dest *url.URL, awsRegion string) error {
 		if aerr, ok := err.(awserr.Error); ok {
 			switch aerr.Code() {
 			case "AccessDenied":
-				return fmt.Errorf("uploading to %s: Access denied", dest)
+				return "", fmt.Errorf("uploading to %s: Access denied", dest)
 			default:
-				return fmt.Errorf("uploading to %s: %s", dest, aerr.Message())
+				return "", fmt.Errorf("uploading to %s: %s", dest, aerr.Message())
 			}
 		}
-		return err
+		return "", err
 	}
 
 	fmt.Printf("uploaded %s\n", dest)
-	return nil
+
+	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
+		Bucket: aws.String(dest.Host),
+		Key:    aws.String(dest.Path),
+	})
+	presignedURL, err := req.Presign(300 * time.Second)
+	if err != nil {
+		return "", err
+	}
+
+	return presignedURL, nil
 }
