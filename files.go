@@ -24,7 +24,7 @@ func scanDirectory(absPath string) (chan FileStat, error) {
 
 	go func() {
 		defer close(out)
-
+		fmt.Println("[-] scanning directory")
 		err := filepath.Walk(absPath, func(filePath string, stat os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -47,6 +47,7 @@ func scanDirectory(absPath string) (chan FileStat, error) {
 		if err != nil {
 			out <- FileStat{err: err}
 		}
+		fmt.Println("[-] directory scan completed")
 
 	}()
 

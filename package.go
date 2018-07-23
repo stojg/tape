@@ -1,16 +1,19 @@
 package main
 
 import (
-	"os"
-	"compress/gzip"
 	"archive/tar"
-	"strings"
-	"path/filepath"
-	"io"
+	"compress/gzip"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
-func buildPackage(tarDirectoryName string, writer io.Writer, files chan FileStat) error {
+func buildPackage(tarDirectoryName string, writer io.WriteCloser, files chan FileStat) error {
+
+	defer writer.Close()
+
 	// set up the gzip writer, BestSpeed is okay since the biggest files are typically images and other binary assets
 	gw, err := gzip.NewWriterLevel(writer, gzip.BestSpeed)
 	if err != nil {
@@ -21,11 +24,15 @@ func buildPackage(tarDirectoryName string, writer io.Writer, files chan FileStat
 	tw := tar.NewWriter(gw)
 	defer tw.Close()
 
+	compressed := 0
 	for file := range files {
 		if err := addFile(tw, tarDirectoryName, file); err != nil {
 			return err
 		}
+		compressed++
 	}
+
+	fmt.Printf("[-] %d files were compressed into a tar archive\n", compressed)
 	return nil
 }
 

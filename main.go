@@ -2,19 +2,16 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"net/url"
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"context"
 	"io"
+	"os"
 	"time"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/silverstripeltd/ssp-sdk-go/ssp"
-	"strings"
 )
 
 var (
@@ -30,96 +27,110 @@ type FileStat struct {
 }
 
 func main() {
-	fmt.Printf("Tape %s\n", version)
+	fmt.Printf("tape %s\n", version)
 
 	if len(os.Args) != 4 {
 		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
 	}
 
-	src, err := filepath.Abs(os.Args[1])
+	// wrap all complicated argument validation and parsing in a config
+	// @todo, return error
+	conf := newConfig(os.Args)
+
+	files, err := scanDirectory(conf.src)
 	if err != nil {
 		fatalErr(err)
 	}
 
-	dashboardURL, err := url.Parse(os.Args[3])
-	if err != nil {
-		fatalErr(err)
-	}
-
-	dParts := strings.Split(strings.Trim(dashboardURL.Path, "/"), "/")
-	if len(dParts) != 5 {
-		fmt.Println(len(dParts), dParts);
-		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
-	}
-
-	packagePrefix := filepath.Base(src)
-
-	srcFiles, err := scanDirectory(src)
-	if err != nil {
-		fatalErr(err)
-	}
-
-	sess := session.Must(session.NewSession(&aws.Config{
-		Region: aws.String("ap-southeast-1"),
-	}))
-
-	s3URL, err := url.Parse(os.Args[2])
-	if err != nil {
-		fatalErr(err)
-	}
-	if s3URL.Scheme != "s3" {
-		fatalErr(fmt.Errorf("S3Uri argument does not have valid protocol, should be 's3'"))
-	}
-	if s3URL.Host == "" {
-		fatalErr(fmt.Errorf("S3Uri is missing bucket name"))
-	}
-
-	fmt.Printf("Uploading %s as a compressed tar to %s\n", src, s3URL)
-
-	region, err := s3manager.GetBucketRegion(context.Background(), sess, s3URL.Host, "ap-southeast-2")
-	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == "NotFound" {
-			fatalErr(fmt.Errorf("unable to find bucket %s's region", s3URL.Host))
-		}
-		fatalErr(err)
-	}
-
+	// use a pipe between the tar compressing and S3 uploading so that we don't have to waste diskspace
 	reader, writer := io.Pipe()
-	defer reader.Close()
 
+	// spin off into a go routine so that the upload can stream the output from this into the uploader via the writer
 	go func() {
-		defer writer.Close()
-		err = buildPackage(packagePrefix, writer, srcFiles)
+		err := buildPackage(conf.tarPrefix, writer, files)
 		if err != nil {
 			fatalErr(err)
 		}
 	}()
 
-	preSignedURL, err := upload(reader, s3URL, region)
+	preSignedURL, err := upload(reader, conf)
 	if err != nil {
 		fatalErr(err)
 	}
 
-	if err := createDeployment(dashboardURL.Scheme, dashboardURL.Host, dParts[2], dParts[4], preSignedURL); err != nil {
+	if err := createDeployment(conf, preSignedURL); err != nil {
 		fatalErr(err)
 	}
 }
 
-func createDeployment(scheme, host, stack, env, packageURL string) error {
+func upload(source io.ReadCloser, conf config) (string, error) {
+	defer source.Close()
+
+	fmt.Println("[-] streaming compressed tar archive to s3")
+
+	sess := session.Must(session.NewSession(&aws.Config{
+		Region: aws.String(conf.s3Region),
+	}))
+
+	svc := s3.New(sess)
+	// Create an uploader (can do multipart) with S3 client and default options
+	uploader := s3manager.NewUploaderWithClient(svc)
+	params := &s3manager.UploadInput{
+		Bucket:      aws.String(conf.s3Bucket),
+		Key:         aws.String(conf.s3Key),
+		ContentType: aws.String("application/x-tgz"),
+		Body:        source,
+	}
+
+	if _, err := uploader.Upload(params); err != nil {
+		if aerr, ok := err.(awserr.Error); ok {
+			switch aerr.Code() {
+			case "AccessDenied":
+				return "", fmt.Errorf("uploading failed: Access denied")
+			default:
+				return "", fmt.Errorf("uploading failed: %s", aerr.Message())
+			}
+		}
+		return "", err
+	}
+	fmt.Println("[-] streaming complete")
+
+	fmt.Println("[-] requesting pre-signed link to the S3 object")
+	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
+		Bucket: aws.String(conf.s3Bucket),
+		Key:    aws.String(conf.s3Key),
+	})
+
+	preSignedURL, err := req.Presign(300 * time.Second)
+	if err != nil {
+		return "", err
+	}
+
+	return preSignedURL, nil
+}
+
+func fatalErr(err error) {
+	fmt.Fprintf(os.Stderr, "[!] %s\n", err.Error())
+	os.Exit(1)
+}
+
+func createDeployment(conf config, packageURL string) error {
+
+	fmt.Printf("[-] requesting deployment from %s\n", conf.dash.Host)
 	client, err := ssp.NewClient(&ssp.Config{
 		Email:   os.Getenv("DASHBOARD_USER"),
 		Token:   os.Getenv("DASHBOARD_TOKEN"),
-		BaseURL: fmt.Sprintf("%s://%s", scheme, host),
+		BaseURL: fmt.Sprintf("%s://%s", conf.dash.Scheme, conf.dash.Host),
 	})
 	if err != nil {
 		return err
 	}
 
-	dep, err := client.CreateDeployment(stack, env, &ssp.CreateDeployment{
+	dep, err := client.CreateDeployment(conf.stack, conf.env, &ssp.CreateDeployment{
 		Ref:     packageURL,
 		RefType: "package",
-		Title:   "My test",
-		Summary: "very deploy, much nice",
+		Title:   "[CI] Deploy",
+		Summary: "",
 		Options: []string{""},
 		Bypass:  false,
 	})
@@ -131,53 +142,4 @@ func createDeployment(scheme, host, stack, env, packageURL string) error {
 	fmt.Println(dep)
 
 	return nil
-}
-
-func fatalErr(err error) {
-	fmt.Fprintln(os.Stderr, err)
-	os.Exit(1)
-}
-
-func upload(source io.Reader, dest *url.URL, awsRegion string) (string, error) {
-
-	contentType := "application/x-tgz"
-
-	sess := session.Must(session.NewSession(&aws.Config{
-		Region: aws.String(awsRegion),
-	}))
-
-	svc := s3.New(sess)
-	// Create an uploader (can do multipart) with S3 client and default options
-	uploader := s3manager.NewUploaderWithClient(svc)
-	params := &s3manager.UploadInput{
-		Bucket:      aws.String(dest.Host),
-		Key:         aws.String(dest.Path),
-		Body:        source,
-		ContentType: aws.String(contentType),
-	}
-
-	if _, err := uploader.Upload(params); err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
-			case "AccessDenied":
-				return "", fmt.Errorf("uploading to %s: Access denied", dest)
-			default:
-				return "", fmt.Errorf("uploading to %s: %s", dest, aerr.Message())
-			}
-		}
-		return "", err
-	}
-
-	fmt.Printf("uploaded %s\n", dest)
-
-	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
-		Bucket: aws.String(dest.Host),
-		Key:    aws.String(dest.Path),
-	})
-	presignedURL, err := req.Presign(300 * time.Second)
-	if err != nil {
-		return "", err
-	}
-
-	return presignedURL, nil
 }
