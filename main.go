@@ -132,7 +132,7 @@ func createDeployment(conf config, packageURL string) error {
 		Title:   "[CI] Deploy",
 		Summary: "",
 		Options: []string{""},
-		Bypass:  false,
+		Bypass:  true,
 	})
 
 	if err != nil {
