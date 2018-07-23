@@ -72,7 +72,7 @@ func main() {
 		fatalErr(err)
 	}
 
-	fmt.Println("\n[🍺] deployment successful!")
+	fmt.Println("\n[=] deployment successful! 🍺")
 }
 
 func upload(source io.ReadCloser, conf config) (string, error) {
@@ -175,8 +175,6 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 
 	fmt.Printf("[-] waiting for result of deployment %d\n", d.ID)
 
-	tick := time.NewTicker(time.Second * 10)
-
 	client, err := ssp.NewClient(&ssp.Config{
 		Email:   os.Getenv("DASHBOARD_USER"),
 		Token:   os.Getenv("DASHBOARD_TOKEN"),
@@ -188,17 +186,25 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 
 	var waited time.Duration
 	ts := time.Now()
+	var state ssp.State = ssp.StateNew
+
+	tick := time.NewTicker(time.Second * 5)
 	for range tick.C {
 		d, err = client.GetDeployment(d.Stack.ID, d.Environment.ID, fmt.Sprintf("%d", d.ID))
 		if err != nil {
 			return d, err
 		}
-		fmt.Printf("[-] deployment in state %s\n", d.State)
 
-		if d.State == "Failed" {
+		if d.State != state {
+			// only display state changes
+			fmt.Printf("[-] deployment currently in state '%s'\n", d.State)
+			state = d.State
+		}
+
+		if d.State == ssp.StateFailed {
 			return d, fmt.Errorf("[!] deployment failed, check logs at %s\n", conf.dash.String())
 		}
-		if d.State == "Completed" {
+		if d.State == ssp.StateCompleted {
 			return d, nil
 		}
 
