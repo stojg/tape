@@ -63,10 +63,11 @@ func main() {
 		fatalErr(err)
 	}
 
-	if err := startDeployment(conf, dep); err != nil {
+	if _, err := waitForDeployResult(conf, dep); err != nil {
 		fatalErr(err)
 	}
 
+	fmt.Println("Deployment successful!")
 }
 
 func upload(source io.ReadCloser, conf config) (string, error) {
@@ -148,7 +149,7 @@ func createDeployment(conf config, packageURL string) (*ssp.Deployment, error) {
 	return dep, nil
 }
 
-func startDeployment(conf config, d *ssp.Deployment) error {
+func startDeployment(conf config, d *ssp.Deployment) (*ssp.Deployment, error) {
 	fmt.Printf("[-] starting deployment %d\n", d.ID)
 
 	client, err := ssp.NewClient(&ssp.Config{
@@ -157,10 +158,53 @@ func startDeployment(conf config, d *ssp.Deployment) error {
 		BaseURL: fmt.Sprintf("%s://%s", conf.dash.Scheme, conf.dash.Host),
 	})
 	if err != nil {
-		return err
+		return d, err
 	}
 
 	req := &ssp.StartDeployment{ID: d.ID}
-	_, err = client.StartDeployment(d.Stack.ID, d.Environment.ID, req)
-	return err
+	d, err = client.StartDeployment(d.Stack.ID, d.Environment.ID, req)
+	return d, err
+}
+
+func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error) {
+
+	fmt.Printf("[-] waiting for result of deployment %d\n", d.ID)
+
+	tick := time.NewTicker(time.Second * 10)
+
+	client, err := ssp.NewClient(&ssp.Config{
+		Email:   os.Getenv("DASHBOARD_USER"),
+		Token:   os.Getenv("DASHBOARD_TOKEN"),
+		BaseURL: fmt.Sprintf("%s://%s", conf.dash.Scheme, conf.dash.Host),
+	})
+	if err != nil {
+		return d, err
+	}
+
+	var waited time.Duration
+	ts := time.Now()
+	for range tick.C {
+		d, err = client.GetDeployment(d.Stack.ID, d.Environment.ID, fmt.Sprintf("%d", d.ID))
+		if err != nil {
+			return d, err
+		}
+		fmt.Printf("[-] deployment in state %s\n", d.State)
+
+		if d.State == "Failed" {
+			return d, fmt.Errorf("[!] deployment failed, check logs at %s\n", conf.dash.Host)
+		}
+		if d.State == "Completed" {
+			return d, nil
+		}
+
+		waited += time.Since(ts)
+		ts = time.Now()
+
+		if waited > time.Minute*20 {
+			return d, fmt.Errorf("[!] waiting for deployment to finish timed out, check logs at %s\n", conf.dash.Host)
+		}
+	}
+
+	return d, nil
+
 }
