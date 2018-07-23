@@ -63,11 +63,16 @@ func main() {
 		fatalErr(err)
 	}
 
+	dep, err = startDeployment(conf, dep)
+	if err != nil {
+		fatalErr(err)
+	}
+
 	if _, err := waitForDeployResult(conf, dep); err != nil {
 		fatalErr(err)
 	}
 
-	fmt.Println("Deployment successful!")
+	fmt.Println("\n[🍺] deployment successful!")
 }
 
 func upload(source io.ReadCloser, conf config) (string, error) {
@@ -191,7 +196,7 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 		fmt.Printf("[-] deployment in state %s\n", d.State)
 
 		if d.State == "Failed" {
-			return d, fmt.Errorf("[!] deployment failed, check logs at %s\n", conf.dash.Host)
+			return d, fmt.Errorf("[!] deployment failed, check logs at %s\n", conf.dash.String())
 		}
 		if d.State == "Completed" {
 			return d, nil
@@ -201,7 +206,7 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 		ts = time.Now()
 
 		if waited > time.Minute*20 {
-			return d, fmt.Errorf("[!] waiting for deployment to finish timed out, check logs at %s\n", conf.dash.Host)
+			return d, fmt.Errorf("[!] waiting for deployment to finish timed out, check logs at %s\n", conf.dash.String())
 		}
 	}
 
