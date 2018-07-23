@@ -58,9 +58,15 @@ func main() {
 		fatalErr(err)
 	}
 
-	if err := createDeployment(conf, preSignedURL); err != nil {
+	dep, err := createDeployment(conf, preSignedURL)
+	if err != nil {
 		fatalErr(err)
 	}
+
+	if err := startDeployment(conf, dep); err != nil {
+		fatalErr(err)
+	}
+
 }
 
 func upload(source io.ReadCloser, conf config) (string, error) {
@@ -114,7 +120,7 @@ func fatalErr(err error) {
 	os.Exit(1)
 }
 
-func createDeployment(conf config, packageURL string) error {
+func createDeployment(conf config, packageURL string) (*ssp.Deployment, error) {
 
 	fmt.Printf("[-] requesting deployment from %s\n", conf.dash.Host)
 	client, err := ssp.NewClient(&ssp.Config{
@@ -123,7 +129,7 @@ func createDeployment(conf config, packageURL string) error {
 		BaseURL: fmt.Sprintf("%s://%s", conf.dash.Scheme, conf.dash.Host),
 	})
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	dep, err := client.CreateDeployment(conf.stack, conf.env, &ssp.CreateDeployment{
@@ -136,10 +142,25 @@ func createDeployment(conf config, packageURL string) error {
 	})
 
 	if err != nil {
+		return dep, err
+	}
+
+	return dep, nil
+}
+
+func startDeployment(conf config, d *ssp.Deployment) error {
+	fmt.Printf("[-] starting deployment %d\n", d.ID)
+
+	client, err := ssp.NewClient(&ssp.Config{
+		Email:   os.Getenv("DASHBOARD_USER"),
+		Token:   os.Getenv("DASHBOARD_TOKEN"),
+		BaseURL: fmt.Sprintf("%s://%s", conf.dash.Scheme, conf.dash.Host),
+	})
+	if err != nil {
 		return err
 	}
 
-	fmt.Println(dep)
-
-	return nil
+	req := &ssp.StartDeployment{ID: d.ID}
+	_, err = client.StartDeployment(d.Stack.ID, d.Environment.ID, req)
+	return err
 }
