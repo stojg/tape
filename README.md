@@ -1,25 +1,64 @@
 # tape
 
-Tape tar:s and gzips a directory so that it always unpacks with an initial folder.
+Tape tar:s and gzips a directory and deploys site code to an SilverStripe platform environment.
 
+This software is beta and should only be used in a CI/CD environment to produce reproducible builds.
+
+Note that this software is not endorsed by SilverStripe ltd and can cause site outages and other
+severe problems if not used carefully.
 
 ## Example
 
-`tape ~/Sites/project1 project1.tgz`
+`./build/tape path/to/src/directory s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV`
 
-Would take a directory like this
+This will immediately deploy and wait until deployment is finished.
+
+It requires deploy access to an environment on the SilverStripe platform and access to write to an AWS S3 bucket.
+
+## Configuration
+
+the following environment variables must be set:
+
+ - `DASHBOARD_TOKEN` - create one at [SilverStripe dashboard](https://platform.silverstripe.com/naut/profile)
+ - `DASHBOARD_USER` - the user for the above token, ie your username
+ - `AWS_DEFAULT_REGION` - the region for the AWS S3 bucket
+ - `AWS_ACCESS_KEY_ID` - the access key for a user allowed to write to the S3 bucket
+ - `AWS_SECRET_ACCESS_KEY` - the secret key for a user allowed to write to the S3 bucket
+
+Example codeship test pipeline configuration
 
 ```
-Sites/
-    project1/
-        file1.txt
-        file2.txt
+./vendor/bin/phpunit
+
+# remove dev packages
+composer install --no-dev && rm -rf .git
+
+# Step out of source directory
+SRC_DIR=`pwd -P` && cd ../
+
+# install tape
+curl -sS -f https://public.stojg.se/tape/tape_linux_1.3.0 -o ./tape && chmod +x ./tape
+
+# pack up, schedule and deploy
+./tape ${SRC_DIR} s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV
 ```
 
-And when you unpacks it will look like this:
+## Example output:
 
 ```
-site/
-    file1.txt
-    file2.txt
+tape 1.3.0
+[-] scanning directory
+[-] directory scan completed
+[-] 5571 files were compressed into a tar archive
+[-] S3 upload completed
+[-] requesting pre-signed link to the S3 object
+[-] requesting deployment from platform.playpen.pl
+[-] starting deployment 3236
+[-] deployment currently in state 'Deploying'
+[-] deployment currently in state 'Deploying'
+[-] deployment currently in state 'Deploying'
+[-] deployment currently in state 'Completed'
+
+[=] deployment successful!
+4m14.453010001s
 ```
