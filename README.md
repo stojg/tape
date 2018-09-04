@@ -7,9 +7,14 @@ This software is beta and should only be used in a CI/CD environment to produce 
 Note that this software is not endorsed by SilverStripe ltd and can cause site outages and other
 severe problems if not used carefully.
 
+## installation
+
+You can grab a version of tape from https://github.com/stojg/tape/releases for your distribution, make
+sure that you set any executable bits on it after download.
+
 ## Example
 
-`./build/tape path/to/src/directory s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV`
+`tape path/to/src/directory s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV`
 
 This will immediately deploy and wait until deployment is finished.
 
