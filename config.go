@@ -11,20 +11,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/silverstripeltd/ssp-sdk-go/ssp"
 )
-
-type config struct {
-	src           string
-	tarPrefix     string
-	packagePrefix string
-	stack, env    string
-	dash          *url.URL
-
-	s3Bucket string
-	s3Key    string
-	s3Region string
-}
 
 func newConfig(args []string) config {
 	c := config{}
@@ -37,16 +27,19 @@ func newConfig(args []string) config {
 
 	c.tarPrefix = filepath.Base(c.src)
 
-	if c.dash, err = url.Parse(args[3]); err != nil {
+	if c.dashboard.url, err = url.Parse(args[3]); err != nil {
 		fatalErr(err)
 	}
 
 	// grab the stack and env from the dashboard url
-	pathParts := strings.Split(strings.Trim(c.dash.Path, "/"), "/")
+	pathParts := strings.Split(strings.Trim(c.dashboard.url.Path, "/"), "/")
 	if len(pathParts) != 5 {
 		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
 	}
 	c.stack, c.env = pathParts[2], pathParts[4]
+
+	c.dashboard.user = os.Getenv("DASHBOARD_USER")
+	c.dashboard.token = os.Getenv("DASHBOARD_TOKEN")
 
 	s3URL, err := url.Parse(args[2])
 	if err != nil {
@@ -60,18 +53,56 @@ func newConfig(args []string) config {
 		fatalErr(fmt.Errorf("S3Uri is missing bucket name"))
 	}
 
-	c.s3Bucket = s3URL.Host
-	c.s3Key = s3URL.Path
+	c.s3.bucket = s3URL.Host
+	c.s3.key = s3URL.Path
+	c.s3.region = bucketRegion(err, c.s3.bucket)
 
+	return c
+}
+
+func bucketRegion(err error, bucket string) string {
 	sess := session.Must(session.NewSession(&aws.Config{Region: aws.String("ap-southeast-2")}))
-	region, err := s3manager.GetBucketRegion(context.Background(), sess, c.s3Bucket, "ap-southeast-2")
+	region, err := s3manager.GetBucketRegion(context.Background(), sess, bucket, "ap-southeast-2")
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == "NotFound" {
-			fatalErr(fmt.Errorf("unable to find bucket %s's region", c.s3Bucket))
+			fatalErr(fmt.Errorf("unable to find bucket %s's region", bucket))
 		}
 		fatalErr(err)
 	}
-	c.s3Region = region
+	return region
+}
 
-	return c
+type config struct {
+	src           string
+	tarPrefix     string
+	packagePrefix string
+
+	stack, env string
+	dashboard  struct {
+		url   *url.URL
+		user  string
+		token string
+	}
+
+	s3 struct {
+		bucket string
+		key    string
+		region string
+	}
+}
+
+func (conf config) dashboardClient() (*ssp.Client, error) {
+	return ssp.NewClient(&ssp.Config{
+		Email:   conf.dashboard.user,
+		Token:   conf.dashboard.token,
+		BaseURL: fmt.Sprintf("%s://%s", conf.dashboard.url.Scheme, conf.dashboard.url.Host),
+	})
+}
+
+func (conf config) S3Client() *s3.S3 {
+	sess := session.Must(session.NewSession(&aws.Config{
+		Region: aws.String(conf.s3.region),
+	}))
+	svc := s3.New(sess)
+	return svc
 }
