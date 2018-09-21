@@ -14,7 +14,7 @@ sure that you set any executable bits on it after download.
 
 ## Example
 
-`tape path/to/src/directory s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV`
+`tape --title "my deploy title" path/to/src/directory s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV`
 
 This will immediately deploy and wait until deployment is finished.
 
@@ -42,16 +42,16 @@ composer install --no-dev && rm -rf .git
 SRC_DIR=`pwd -P` && cd ../
 
 # install tape
-curl -sS -f https://public.stojg.se/tape/tape_linux_1.3.0 -o ./tape && chmod +x ./tape
+curl -sS -f https://public.stojg.se/tape/tape_linux_1.4.0 -o ./tape && chmod +x ./tape
 
 # pack up, schedule and deploy
-./tape ${SRC_DIR} s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV
+./tape -title "my deploy title" ${SRC_DIR} s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV
 ```
 
 ## Example output:
 
 ```
-tape 1.3.0
+tape 1.4.0
 [-] scanning directory
 [-] directory scan completed
 [-] 5571 files were compressed into a tar archive
