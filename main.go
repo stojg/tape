@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -31,24 +32,30 @@ type FileStat struct {
 }
 
 func main() {
-	err := realMain()
+
+	var title string
+
+	flag.StringVar(&title, "title", "[CI] Deploy", "A title to use in the deployments title")
+	flag.Parse()
+
+	err := realMain(title)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "[!] %s\n", err.Error())
 		os.Exit(1)
 	}
 }
 
-func realMain() error {
+func realMain(title string) error {
 	ts := time.Now()
 	fmt.Printf("tape %s\n", version)
 
-	if len(os.Args) != 4 {
-		return fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV \n", os.Args[0])
+	if len(flag.Args()) != 3 {
+		return fmt.Errorf("usage: %s --title \"my deploytitle\" path/to/src/directory s3://bucket/destination/file.tar.gz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV \n", os.Args[0])
 	}
 
 	// wrap all complicated argument validation and parsing in a config
 	// @todo, return error
-	conf := newConfig(os.Args)
+	conf := newConfig(flag.Args())
 
 	files, err := scanDirectory(conf.src)
 	if err != nil {
@@ -71,7 +78,7 @@ func realMain() error {
 		return err
 	}
 
-	dep, err := createDeployment(conf, preSignedURL)
+	dep, err := createDeployment(conf, preSignedURL, title)
 	if err != nil {
 		return err
 	}
@@ -140,7 +147,7 @@ func fatalErr(err error) {
 	os.Exit(1)
 }
 
-func createDeployment(conf config, packageURL string) (*ssp.Deployment, error) {
+func createDeployment(conf config, packageURL, title string) (*ssp.Deployment, error) {
 
 	fmt.Printf("[-] requesting deployment from %s\n", conf.dashboard.url.Host)
 	client, err := conf.dashboardClient()
@@ -151,7 +158,7 @@ func createDeployment(conf config, packageURL string) (*ssp.Deployment, error) {
 	dep, err := client.CreateDeployment(conf.stack, conf.env, &ssp.CreateDeployment{
 		Ref:     packageURL,
 		RefType: "package",
-		Title:   "[CI] Deploy",
+		Title:   title,
 		Summary: "",
 		Options: []string{""},
 		Bypass:  true,

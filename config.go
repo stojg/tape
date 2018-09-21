@@ -21,13 +21,13 @@ func newConfig(args []string) config {
 
 	var err error
 
-	if c.src, err = filepath.Abs(args[1]); err != nil {
+	if c.src, err = filepath.Abs(args[0]); err != nil {
 		fatalErr(err)
 	}
 
 	c.tarPrefix = filepath.Base(c.src)
 
-	if c.dashboard.url, err = url.Parse(args[3]); err != nil {
+	if c.dashboard.url, err = url.Parse(args[2]); err != nil {
 		fatalErr(err)
 	}
 
@@ -41,7 +41,7 @@ func newConfig(args []string) config {
 	c.dashboard.user = os.Getenv("DASHBOARD_USER")
 	c.dashboard.token = os.Getenv("DASHBOARD_TOKEN")
 
-	s3URL, err := url.Parse(args[2])
+	s3URL, err := url.Parse(args[1])
 	if err != nil {
 		fatalErr(err)
 	}
