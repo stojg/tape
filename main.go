@@ -132,11 +132,7 @@ func preSignedLink(conf config) (string, error) {
 		Bucket: aws.String(conf.s3.bucket),
 		Key:    aws.String(conf.s3.key),
 	})
-	preSignedURL, err := req.Presign(300 * time.Second)
-	if err != nil {
-		return "", err
-	}
-	return preSignedURL, nil
+	return req.Presign(300 * time.Second)
 }
 
 func handleError(err error) {
