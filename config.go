@@ -22,19 +22,19 @@ func newConfig(args []string) config {
 	var err error
 
 	if c.src, err = filepath.Abs(args[0]); err != nil {
-		fatalErr(err)
+		handleError(err)
 	}
 
 	c.tarPrefix = filepath.Base(c.src)
 
 	if c.dashboard.url, err = url.Parse(args[2]); err != nil {
-		fatalErr(err)
+		handleError(err)
 	}
 
 	// grab the stack and env from the dashboard url
 	pathParts := strings.Split(strings.Trim(c.dashboard.url.Path, "/"), "/")
 	if len(pathParts) != 5 {
-		fatalErr(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
+		handleError(fmt.Errorf("usage: %s path/to/src/directory s3://bucket/destination/file.tar.gz http://platform/ \n", os.Args[0]))
 	}
 	c.stack, c.env = pathParts[2], pathParts[4]
 
@@ -43,39 +43,38 @@ func newConfig(args []string) config {
 
 	s3URL, err := url.Parse(args[1])
 	if err != nil {
-		fatalErr(err)
+		handleError(err)
 	}
 
 	if s3URL.Scheme != "s3" {
-		fatalErr(fmt.Errorf("S3Uri argument does not have valid protocol, should be 's3'"))
+		handleError(fmt.Errorf("S3Uri argument does not have valid protocol, should be 's3'"))
 	}
 	if s3URL.Host == "" {
-		fatalErr(fmt.Errorf("S3Uri is missing bucket name"))
+		handleError(fmt.Errorf("S3Uri is missing bucket name"))
 	}
 
 	c.s3.bucket = s3URL.Host
 	c.s3.key = s3URL.Path
-	c.s3.region = bucketRegion(err, c.s3.bucket)
+	c.s3.region = bucketRegion(c.s3.bucket)
 
 	return c
 }
 
-func bucketRegion(err error, bucket string) string {
+func bucketRegion(bucket string) string {
 	sess := session.Must(session.NewSession(&aws.Config{Region: aws.String("ap-southeast-2")}))
 	region, err := s3manager.GetBucketRegion(context.Background(), sess, bucket, "ap-southeast-2")
 	if err != nil {
 		if aerr, ok := err.(awserr.Error); ok && aerr.Code() == "NotFound" {
-			fatalErr(fmt.Errorf("unable to find bucket %s's region", bucket))
+			handleError(fmt.Errorf("unable to find bucket %s's region", bucket))
 		}
-		fatalErr(err)
+		handleError(err)
 	}
 	return region
 }
 
 type config struct {
-	src           string
-	tarPrefix     string
-	packagePrefix string
+	src       string
+	tarPrefix string
 
 	stack, env string
 	dashboard  struct {

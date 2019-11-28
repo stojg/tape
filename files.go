@@ -1,8 +1,8 @@
 package main
 
 import (
-	"os"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -24,7 +24,7 @@ func scanDirectory(absPath string) (chan FileStat, error) {
 
 	go func() {
 		defer close(out)
-		fmt.Println("[-] scanning directory")
+		fmt.Println("[-] scanning directory for compression")
 		err := filepath.Walk(absPath, func(filePath string, stat os.FileInfo, err error) error {
 			if err != nil {
 				return err
@@ -50,6 +50,5 @@ func scanDirectory(absPath string) (chan FileStat, error) {
 		fmt.Println("[-] directory scan completed")
 
 	}()
-
 	return out, nil
 }

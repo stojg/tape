@@ -33,25 +33,20 @@ type FileStat struct {
 
 func main() {
 
-	var title string
-
-	flag.StringVar(&title, "title", "[CI] Deploy", "A title to use in the deployments title")
+	title := flag.String("title", "[CI] Deploy", "A title to use in the deployments title")
 	flag.Parse()
 
-	err := realMain(title)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "[!] %s\n", err.Error())
+	if len(flag.Args()) != 3 {
+		usage()
 		os.Exit(1)
 	}
+
+	handleError(realMain(*title))
 }
 
 func realMain(title string) error {
-	ts := time.Now()
+	startTime := time.Now()
 	fmt.Printf("tape %s\n", version)
-
-	if len(flag.Args()) != 3 {
-		return fmt.Errorf("usage: %s --title \"my deploytitle\" path/to/src/directory s3://bucket/destination/file.tar.gz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV \n", os.Args[0])
-	}
 
 	// wrap all complicated argument validation and parsing in a config
 	// @todo, return error
@@ -62,18 +57,20 @@ func realMain(title string) error {
 		return err
 	}
 
-	// use a pipe between the tar compressing and S3 uploading so that we don't have to waste diskspace
+	// use a pipe between the tar compressing and S3 uploading so that we don't have to waste disk space
 	reader, writer := io.Pipe()
 
 	// spin off into a go routine so that the upload can stream the output from this into the uploader via the writer
 	go func() {
 		err := buildPackage(conf.tarPrefix, writer, files)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[!] %s\n", err.Error())
-		}
+		handleError(err)
 	}()
 
-	preSignedURL, err := upload(reader, conf)
+	if err := upload(reader, conf); err != nil {
+		return err
+	}
+
+	preSignedURL, err := preSignedLink(conf)
 	if err != nil {
 		return err
 	}
@@ -93,17 +90,13 @@ func realMain(title string) error {
 	}
 
 	fmt.Println("\n[=] deployment successful! 🍺")
-	fmt.Printf("    %s\n", time.Since(ts))
+	fmt.Printf("    %s\n", time.Since(startTime))
 	return nil
 }
 
-func upload(source io.ReadCloser, conf config) (string, error) {
-	defer source.Close()
-
-	svc := conf.S3Client()
-
+func upload(source io.ReadCloser, conf config) error {
 	// Create an uploader (can do multipart) with S3 client and default options
-	uploader := s3manager.NewUploaderWithClient(svc)
+	uploader := s3manager.NewUploaderWithClient(conf.S3Client())
 	params := &s3manager.UploadInput{
 		Bucket:      aws.String(conf.s3.bucket),
 		Key:         aws.String(conf.s3.key),
@@ -111,44 +104,52 @@ func upload(source io.ReadCloser, conf config) (string, error) {
 		Body:        source,
 	}
 
+	fmt.Printf("[-] starting upload to s3://%s/%s\n", conf.s3.bucket, conf.s3.key)
 	_, err := uploader.Upload(params)
+
+	handleError(source.Close())
 
 	// try to parse AWS errors so they are not so but ugly to display
 	if err != nil {
-		if aerr, ok := err.(awserr.Error); ok {
-			switch aerr.Code() {
+		if awsErr, ok := err.(awserr.Error); ok {
+			switch awsErr.Code() {
 			case "AccessDenied":
-				return "", fmt.Errorf("uploading failed: Access denied for %s", conf.s3.bucket)
+				return fmt.Errorf("uploading to S3 bucket '%s' got an access denied error", conf.s3.bucket)
 			default:
-				return "", fmt.Errorf("uploading failed: %s", aerr.Message())
+				return fmt.Errorf("uploading failed: '%s'", awsErr.Message())
 			}
 		}
-		return "", err
+		return err
 	}
 
 	fmt.Println("[-] S3 upload completed")
-	fmt.Println("[-] requesting pre-signed link to the S3 object")
+	return nil
+}
 
-	req, _ := svc.GetObjectRequest(&s3.GetObjectInput{
+func preSignedLink(conf config) (string, error) {
+	fmt.Println("[-] requesting a 5 minute pre-signed link to the S3 object")
+	req, _ := conf.S3Client().GetObjectRequest(&s3.GetObjectInput{
 		Bucket: aws.String(conf.s3.bucket),
 		Key:    aws.String(conf.s3.key),
 	})
-
 	preSignedURL, err := req.Presign(300 * time.Second)
 	if err != nil {
 		return "", err
 	}
-
 	return preSignedURL, nil
 }
 
-func fatalErr(err error) {
-	fmt.Fprintf(os.Stderr, "[!] %s\n", err.Error())
+func handleError(err error) {
+	if err == nil {
+		return
+	}
+	if _, err2 := fmt.Fprintf(os.Stderr, "[!] %s\n", err.Error()); err2 != nil {
+		panic(err2)
+	}
 	os.Exit(1)
 }
 
 func createDeployment(conf config, packageURL, title string) (*ssp.Deployment, error) {
-
 	fmt.Printf("[-] requesting deployment from %s\n", conf.dashboard.url.Host)
 	client, err := conf.dashboardClient()
 	if err != nil {
@@ -224,6 +225,14 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 			return d, fmt.Errorf("waiting for deployment to finish timed out, check logs at %s\n", conf.dashboard.url.String())
 		}
 	}
+}
 
-	return d, nil
+func usage() {
+	format := `"usage: %s [--title \"my deploytitle\"] ` +
+		`path/to/src/directory ` +
+		`s3://bucket/destination/file.tar.gz ` +
+		`https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV\n`
+
+	_, err := fmt.Fprintf(os.Stderr, format, os.Args[0])
+	handleError(err)
 }
