@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -24,11 +25,11 @@ var (
 )
 
 type FileStat struct {
-	src  string
-	path string
-	link string
-	stat os.FileInfo
-	err  error
+	baseDir      string
+	relativePath string
+	link         string
+	stat         os.FileInfo
+	err          error
 }
 
 func main() {
@@ -104,10 +105,10 @@ func upload(source io.ReadCloser, conf config) error {
 		Body:        source,
 	}
 
-	fmt.Printf("[-] starting upload to s3://%s/%s\n", conf.s3.bucket, conf.s3.key)
+	fmt.Printf("[-] starting upload to s3://%s\n", path.Join(conf.s3.bucket, conf.s3.key))
 	_, err := uploader.Upload(params)
 
-	handleError(source.Close())
+	closer(source)
 
 	// try to parse AWS errors so they are not so but ugly to display
 	if err != nil {
@@ -235,4 +236,10 @@ func usage() {
 
 	_, err := fmt.Fprintf(os.Stderr, format, os.Args[0])
 	handleError(err)
+}
+
+func closer(x io.Closer) {
+	if err := x.Close(); err != nil {
+		handleError(err)
+	}
 }

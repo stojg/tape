@@ -4,28 +4,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
-func scanDirectory(absPath string) (chan FileStat, error) {
+func scanDirectory(baseDir string) (<-chan FileStat, error) {
 
 	out := make(chan FileStat)
 
-	stat, err := os.Stat(absPath)
+	stat, err := os.Stat(baseDir)
 	if os.IsNotExist(err) {
-		return out, fmt.Errorf("path '%s' doesn't exist", absPath)
+		return out, fmt.Errorf("path '%s' doesn't exist", baseDir)
 	}
 	if err != nil {
 		return out, err
 	}
 
 	if !stat.IsDir() {
-		return out, fmt.Errorf("%s is not a directory", absPath)
+		return out, fmt.Errorf("%s is not a directory", baseDir)
 	}
 
 	go func() {
 		defer close(out)
-		fmt.Println("[-] scanning directory for compression")
-		err := filepath.Walk(absPath, func(filePath string, stat os.FileInfo, err error) error {
+		err := filepath.Walk(baseDir, func(filePath string, stat os.FileInfo, err error) error {
 			if err != nil {
 				return err
 			}
@@ -36,19 +36,20 @@ func scanDirectory(absPath string) (chan FileStat, error) {
 				}
 			}
 
+			// get path relative to baseDir
+			relativeName := strings.TrimPrefix(filePath, baseDir)
+
 			out <- FileStat{
-				src:  absPath,
-				path: filePath,
-				stat: stat,
-				link: link,
+				baseDir:      baseDir,
+				relativePath: relativeName,
+				stat:         stat,
+				link:         link,
 			}
 			return nil
 		})
 		if err != nil {
 			out <- FileStat{err: err}
 		}
-		fmt.Println("[-] directory scan completed")
-
 	}()
 	return out, nil
 }
