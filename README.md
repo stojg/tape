@@ -42,7 +42,7 @@ composer install --no-dev && rm -rf .git
 SRC_DIR=`pwd -P` && cd ../
 
 # install tape
-curl -sS -f https://public.stojg.se/tape/tape_linux_1.4.0 -o ./tape && chmod +x ./tape
+curl --silent --show-error --fail --location --output ./tape https://github.com/stojg/tape/releases/download/1.4.0/tape_linux_1.4.0 && chmod +x ./tape
 
 # pack up, schedule and deploy
 ./tape -title "my deploy title" ${SRC_DIR} s3://bucket/destination/file.tgz https://platform.silverstripe.com/naut/project/MYPROJECT/environment/MYENV
