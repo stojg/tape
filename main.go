@@ -49,8 +49,6 @@ func realMain(title string) error {
 	startTime := time.Now()
 	fmt.Printf("tape %s\n", version)
 
-	// wrap all complicated argument validation and parsing in a config
-	// @todo, return error
 	conf := newConfig(flag.Args())
 
 	files, err := scanDirectory(conf.src)
@@ -109,15 +107,16 @@ func upload(source io.ReadCloser, conf config) error {
 	_, err := uploader.Upload(params)
 
 	closer(source)
-
-	// try to parse AWS errors so they are not so but ugly to display
+	// try to parse AWS errors so they are not so butt ugly to display
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			switch awsErr.Code() {
 			case "AccessDenied":
-				return fmt.Errorf("uploading to S3 bucket '%s' got an access denied error", conf.s3.bucket)
+				return fmt.Errorf("upload to S3 bucket '%s' failed, got an access denied error", conf.s3.bucket)
+			case "NoCredentialProviders":
+				return fmt.Errorf("upload failed: tape could not find AWS credentials to use")
 			default:
-				return fmt.Errorf("uploading failed: '%s'", awsErr.Message())
+				return fmt.Errorf("upload failed: %s - %s", awsErr.Code(), awsErr.Message())
 			}
 		}
 		return err
