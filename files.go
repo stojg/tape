@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 func scanDirectory(baseDir string) (<-chan FileStat, error) {
@@ -37,11 +36,14 @@ func scanDirectory(baseDir string) (<-chan FileStat, error) {
 			}
 
 			// get path relative to baseDir
-			relativeName := strings.TrimPrefix(filePath, baseDir)
+			relPath, err := filepath.Rel(baseDir, filePath)
+			if err != nil {
+				return err
+			}
 
 			out <- FileStat{
 				baseDir:      baseDir,
-				relativePath: relativeName,
+				relativePath: relPath,
 				stat:         stat,
 				link:         link,
 			}

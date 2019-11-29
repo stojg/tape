@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -221,6 +222,8 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 	checkTick := time.NewTicker(time.Second * 5)
 	cancelTick := time.NewTicker(time.Minute * 25)
 
+	deployURL := path.Join(conf.dashboard.url.String(), "overview", "deployment", strconv.Itoa(d.ID))
+
 	for {
 		select {
 		// need to output something so that CodeShip doesn't cancel the build due to no output
@@ -240,14 +243,14 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 			}
 
 			if d.State == ssp.StateFailed {
-				return d, fmt.Errorf("deployment failed, check logs at %s\n", conf.dashboard.url.String())
+				return d, fmt.Errorf("deployment failed, check logs at %s\n", deployURL)
 			}
 			if d.State == ssp.StateCompleted {
 				return d, nil
 			}
 
 		case <-cancelTick.C:
-			return d, fmt.Errorf("waiting for deployment to finish timed out, check logs at %s\n", conf.dashboard.url.String())
+			return d, fmt.Errorf("waiting for deployment to finish timed out, check logs at %s\n", deployURL)
 		}
 	}
 }
