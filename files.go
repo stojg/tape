@@ -49,6 +49,7 @@ func scanDirectory(baseDir string) (<-chan FileStat, error) {
 			}
 			return nil
 		})
+
 		if err != nil {
 			out <- FileStat{err: err}
 		}

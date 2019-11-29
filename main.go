@@ -16,10 +16,8 @@ import (
 	"github.com/silverstripeltd/ssp-sdk-go/ssp"
 )
 
-// @todo output a link to the deployment after it's been created
 // @todo output how long this deployment might take (fast|full)
 // @todo allow deploy = true|false argument
-// @todo allow Subject line
 
 var (
 	version string
