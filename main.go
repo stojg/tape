@@ -56,12 +56,15 @@ func realMain(title string) error {
 		return err
 	}
 
+	// remove .git etc
+	filteredFiles := filterFiles(files)
+
 	// use a pipe between the tar compressing and S3 uploading so that we don't have to waste disk space
 	reader, writer := io.Pipe()
 
 	// spin off into a go routine so that the upload can stream the output from this into the uploader via the writer
 	go func() {
-		err := buildPackage(conf.tarPrefix, writer, files)
+		err := buildPackage(conf.tarPrefix, writer, filteredFiles)
 		handleError(err)
 	}()
 
@@ -91,6 +94,32 @@ func realMain(title string) error {
 	fmt.Println("\n[=] deployment successful! 🍺")
 	fmt.Printf("    %s\n", time.Since(startTime))
 	return nil
+}
+
+func filterFiles(files <-chan FileStat) <-chan FileStat {
+	out := make(chan FileStat)
+
+	go func() {
+		var filtered uint64
+		for file := range files {
+			if file.relativePath == "." {
+				continue
+			}
+			if file.relativePath == ".git" {
+				filtered++
+				continue
+			}
+			if file.relativePath == "/.git/" {
+				filtered++
+				continue
+			}
+			out <- file
+		}
+		fmt.Printf("[-] filtered out %d files\n", filtered)
+		close(out)
+	}()
+	return out
+
 }
 
 func upload(source io.ReadCloser, conf config) error {
