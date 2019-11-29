@@ -218,7 +218,7 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 
 	progressTick := time.NewTicker(time.Minute)
 	checkTick := time.NewTicker(time.Second * 5)
-	cancelTick := time.NewTicker(time.Minute * 25)
+	cancelTick := time.NewTimer(time.Minute * 25)
 
 	deployURL := path.Join(conf.dashboard.url.String(), "overview", "deployment", strconv.Itoa(d.ID))
 
