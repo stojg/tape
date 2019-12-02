@@ -36,7 +36,7 @@ Example codeship test pipeline configuration
 ./vendor/bin/phpunit
 
 # remove dev packages
-composer install --no-dev && rm -rf .git
+composer install --no-progress --prefer-dist --no-dev --ignore-platform-reqs --optimize-autoloader --no-interaction --no-suggest && rm -rf .git
 
 # Step out of source directory
 SRC_DIR=`pwd -P` && cd ../

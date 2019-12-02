@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -33,7 +34,10 @@ type FileStat struct {
 
 func main() {
 
+	fmt.Printf("tape %s\n", version)
+
 	title := flag.String("title", "[CI] Deploy", "A title to use in the deployments title")
+	verbose := flag.Bool("verbose", false, "verbose output")
 	flag.Parse()
 
 	if len(flag.Args()) != 3 {
@@ -41,61 +45,60 @@ func main() {
 		os.Exit(1)
 	}
 
-	handleError(realMain(*title))
+	handleError(realMain(*title, *verbose))
 }
 
-func realMain(title string) error {
+func realMain(title string, verbose bool) error {
 	startTime := time.Now()
-	fmt.Printf("tape %s\n", version)
 
-	conf := newConfig(flag.Args())
+	app := newApp(flag.Args(), verbose)
 
-	files, err := scanDirectory(conf.src)
+	files, err := scanDirectory(app)
 	if err != nil {
 		return err
 	}
 
 	// remove .git etc
-	filteredFiles := filterFiles(files)
+	filteredFiles := filterFiles(app, files)
 
 	// use a pipe between the tar compressing and S3 uploading so that we don't have to waste disk space
 	reader, writer := io.Pipe()
 
 	// spin off into a go routine so that the upload can stream the output from this into the uploader via the writer
 	go func() {
-		err := buildPackage(conf.tarPrefix, writer, filteredFiles)
+		err := buildPackage(app, writer, filteredFiles)
 		handleError(err)
 	}()
 
-	if err := upload(reader, conf); err != nil {
+	if err := upload(app, reader); err != nil {
 		return err
 	}
 
-	preSignedURL, err := preSignedLink(conf)
+	preSignedURL, err := preSignedLink(app)
 	if err != nil {
 		return err
 	}
 
-	dep, err := createDeployment(conf, preSignedURL, title)
+	dep, err := createDeployment(app, preSignedURL, title)
 	if err != nil {
 		return err
 	}
 
-	dep, err = startDeployment(conf, dep)
+	dep, err = startDeployment(app, dep)
 	if err != nil {
 		return err
 	}
 
-	if _, err := waitForDeployResult(conf, dep); err != nil {
+	if _, err := waitForDeployResult(app, dep); err != nil {
 		return err
 	}
 
-	fmt.Println("\n[=] deployment successful! 🍺")
-	fmt.Printf("    %s\n", time.Since(startTime))
+	app.Infof("\n[=] deployment successful! 🍺")
+	app.Infof("    %s\n", time.Since(startTime))
 	return nil
 }
 
-func filterFiles(files <-chan FileStat) <-chan FileStat {
+func filterFiles(app application, files <-chan FileStat) <-chan FileStat {
 	out := make(chan FileStat)
 
 	go func() {
@@ -104,43 +107,65 @@ func filterFiles(files <-chan FileStat) <-chan FileStat {
 			if file.relativePath == "." {
 				continue
 			}
-			if file.relativePath == ".git" {
+			if file.stat.Name() == ".git" && file.stat.IsDir() {
 				filtered++
 				continue
 			}
-			if file.relativePath == "/.git/" {
+			if strings.HasPrefix(file.relativePath, ".git/") {
+				filtered++
+				continue
+			}
+			if strings.Contains(file.relativePath, "/.git/") {
 				filtered++
 				continue
 			}
 			out <- file
 		}
-		fmt.Printf("[-] filtered out %d files\n", filtered)
+		app.Debugf("excluded %d files (.git etc)\n", filtered)
 		close(out)
 	}()
 	return out
-
 }
 
-func upload(source io.ReadCloser, conf config) error {
+func upload(app application, source io.ReadCloser) error {
 	// Create an uploader (can do multipart) with S3 client and default options
-	uploader := s3manager.NewUploaderWithClient(conf.S3Client())
+	uploader := s3manager.NewUploaderWithClient(app.S3Client())
+
+	r := NewSizeReader(source)
 	params := &s3manager.UploadInput{
-		Bucket:      aws.String(conf.s3.bucket),
-		Key:         aws.String(conf.s3.key),
+		Bucket:      aws.String(app.s3.bucket),
+		Key:         aws.String(app.s3.key),
 		ContentType: aws.String("application/x-tgz"),
-		Body:        source,
+		Body:        r,
 	}
 
-	fmt.Printf("[-] starting upload to s3://%s\n", path.Join(conf.s3.bucket, conf.s3.key))
+	app.Infof("starting upload to s3://%s\n", path.Join(app.s3.bucket, app.s3.key))
+
+	timer := time.NewTicker(1 * time.Second)
+	go func(tick *time.Ticker) {
+		for {
+			select {
+			case <-tick.C:
+				n, done := r.N()
+				if done {
+					app.Debugf("%s of data is being uploaded", byteCountDecimal(n))
+					tick.Stop()
+					return
+				}
+			}
+		}
+	}(timer)
+
+	start := time.Now()
 	_, err := uploader.Upload(params)
 
-	closer(source)
+	closer(r)
 	// try to parse AWS errors so they are not so butt ugly to display
 	if err != nil {
 		if awsErr, ok := err.(awserr.Error); ok {
 			switch awsErr.Code() {
 			case "AccessDenied":
-				return fmt.Errorf("upload to S3 bucket '%s' failed, got an access denied error", conf.s3.bucket)
+				return fmt.Errorf("upload to S3 bucket '%s' failed, got an access denied error", app.s3.bucket)
 			case "NoCredentialProviders":
 				return fmt.Errorf("upload failed: tape could not find AWS credentials to use")
 			default:
@@ -150,15 +175,16 @@ func upload(source io.ReadCloser, conf config) error {
 		return err
 	}
 
-	fmt.Println("[-] S3 upload completed")
+	app.Infof("S3 upload completed")
+	app.Debugf("Upload completed in %s", time.Since(start))
 	return nil
 }
 
-func preSignedLink(conf config) (string, error) {
-	fmt.Println("[-] requesting a 5 minute pre-signed link to the S3 object")
-	req, _ := conf.S3Client().GetObjectRequest(&s3.GetObjectInput{
-		Bucket: aws.String(conf.s3.bucket),
-		Key:    aws.String(conf.s3.key),
+func preSignedLink(app application) (string, error) {
+	app.Infof("requesting a 5 minute pre-signed link to the S3 object")
+	req, _ := app.S3Client().GetObjectRequest(&s3.GetObjectInput{
+		Bucket: aws.String(app.s3.bucket),
+		Key:    aws.String(app.s3.key),
 	})
 	return req.Presign(300 * time.Second)
 }
@@ -173,14 +199,14 @@ func handleError(err error) {
 	os.Exit(1)
 }
 
-func createDeployment(conf config, packageURL, title string) (*ssp.Deployment, error) {
-	fmt.Printf("[-] requesting deployment from %s\n", conf.dashboard.url.Host)
-	client, err := conf.dashboardClient()
+func createDeployment(app application, packageURL, title string) (*ssp.Deployment, error) {
+	app.Infof("requesting deployment from %s\n", app.dashboard.url.Host)
+	client, err := app.dashboardClient()
 	if err != nil {
 		return nil, err
 	}
 
-	dep, err := client.CreateDeployment(conf.stack, conf.env, &ssp.CreateDeployment{
+	dep, err := client.CreateDeployment(app.stack, app.env, &ssp.CreateDeployment{
 		Ref:     packageURL,
 		RefType: "package",
 		Title:   title,
@@ -196,10 +222,10 @@ func createDeployment(conf config, packageURL, title string) (*ssp.Deployment, e
 	return dep, nil
 }
 
-func startDeployment(conf config, d *ssp.Deployment) (*ssp.Deployment, error) {
-	fmt.Printf("[-] starting deployment %d\n", d.ID)
+func startDeployment(app application, d *ssp.Deployment) (*ssp.Deployment, error) {
+	app.Infof("starting deployment %d\n", d.ID)
 
-	client, err := conf.dashboardClient()
+	client, err := app.dashboardClient()
 	if err != nil {
 		return nil, err
 	}
@@ -208,8 +234,8 @@ func startDeployment(conf config, d *ssp.Deployment) (*ssp.Deployment, error) {
 	return d, err
 }
 
-func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error) {
-	client, err := conf.dashboardClient()
+func waitForDeployResult(app application, d *ssp.Deployment) (*ssp.Deployment, error) {
+	client, err := app.dashboardClient()
 	if err != nil {
 		return nil, err
 	}
@@ -220,13 +246,13 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 	checkTick := time.NewTicker(time.Second * 5)
 	cancelTick := time.NewTimer(time.Minute * 25)
 
-	deployURL := path.Join(conf.dashboard.url.String(), "overview", "deployment", strconv.Itoa(d.ID))
+	deployURL := path.Join(app.dashboard.url.String(), "overview", "deployment", strconv.Itoa(d.ID))
 
 	for {
 		select {
 		// need to output something so that CodeShip doesn't cancel the build due to no output
 		case <-progressTick.C:
-			fmt.Printf("[-] deployment currently in state '%s'\n", d.State)
+			app.Infof("[-] deployment currently in state '%s'\n", d.State)
 
 		case <-checkTick.C:
 			d, err = client.GetDeployment(d.Stack.ID, d.Environment.ID, fmt.Sprintf("%d", d.ID))
@@ -236,7 +262,7 @@ func waitForDeployResult(conf config, d *ssp.Deployment) (*ssp.Deployment, error
 
 			if d.State != state {
 				// only display state changes
-				fmt.Printf("[-] deployment currently in state '%s'\n", d.State)
+				app.Infof("[-] deployment currently in state '%s'\n", d.State)
 				state = d.State
 			}
 

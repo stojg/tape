@@ -14,18 +14,21 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/silverstripeltd/ssp-sdk-go/ssp"
+	"github.com/stojg/tape/internal"
 )
 
-func newConfig(args []string) config {
-	c := config{}
+func newApp(args []string, verbose bool) application {
+	c := application{}
+
+	c.Logger = internal.NewCliLogger(verbose)
 
 	var err error
 
-	if c.src, err = filepath.Abs(args[0]); err != nil {
+	if c.baseDir, err = filepath.Abs(args[0]); err != nil {
 		handleError(err)
 	}
 
-	c.tarPrefix = filepath.Base(c.src)
+	c.tarPrefix = filepath.Base(c.baseDir)
 
 	if c.dashboard.url, err = url.Parse(args[2]); err != nil {
 		handleError(err)
@@ -72,8 +75,9 @@ func bucketRegion(bucket string) string {
 	return region
 }
 
-type config struct {
-	src       string
+type application struct {
+	internal.Logger
+	baseDir   string
 	tarPrefix string
 
 	stack, env string
@@ -90,7 +94,7 @@ type config struct {
 	}
 }
 
-func (conf config) dashboardClient() (*ssp.Client, error) {
+func (conf application) dashboardClient() (*ssp.Client, error) {
 	return ssp.NewClient(&ssp.Config{
 		Email:   conf.dashboard.user,
 		Token:   conf.dashboard.token,
@@ -98,7 +102,7 @@ func (conf config) dashboardClient() (*ssp.Client, error) {
 	})
 }
 
-func (conf config) S3Client() *s3.S3 {
+func (conf application) S3Client() *s3.S3 {
 	sess := session.Must(session.NewSession(&aws.Config{
 		Region: aws.String(conf.s3.region),
 	}))

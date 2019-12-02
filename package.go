@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 )
 
-func buildPackage(destBaseDir string, writer io.WriteCloser, files <-chan FileStat) error {
+func buildPackage(app application, writer io.WriteCloser, files <-chan FileStat) error {
 
+	destBaseDir := app.tarPrefix
 	defer closer(writer)
 
-	// set up the gzip writer, BestSpeed is okay since the biggest files are typically images and other binary assets
-	gw, err := gzip.NewWriterLevel(writer, gzip.BestSpeed)
+	gw, err := gzip.NewWriterLevel(writer, gzip.BestCompression)
 	if err != nil {
 		return err
 	}
@@ -24,23 +24,25 @@ func buildPackage(destBaseDir string, writer io.WriteCloser, files <-chan FileSt
 	tw := tar.NewWriter(gw)
 	defer closer(tw)
 
-	var compressed uint64
+	var compressed int64
+	var size int64
 	for file := range files {
-		if err := addFile(tw, destBaseDir, file); err != nil {
+		written, err := addFile(tw, destBaseDir, file)
+		if err != nil {
 			return err
 		}
+		size = size + written
 		compressed++
 	}
-
-	fmt.Printf("[-] %d files were compressed into a tar archive\n", compressed)
+	app.Debugf("%d files (%s) were compressed into a tar\n", compressed, byteCountDecimal(size))
 	return nil
 }
 
-func addFile(tw *tar.Writer, destBaseDir string, file FileStat) error {
+func addFile(tw *tar.Writer, destBaseDir string, file FileStat) (int64, error) {
 
 	header, err := tar.FileInfoHeader(file.stat, file.link)
 	if err != nil {
-		return fmt.Errorf("FileInfoHeader: %s", err)
+		return 0, fmt.Errorf("FileInfoHeader: %s", err)
 	}
 
 	// tweak the Name inside the tar so that get tar:ed out properly
@@ -48,24 +50,24 @@ func addFile(tw *tar.Writer, destBaseDir string, file FileStat) error {
 
 	// write the header to the tarball archive
 	if err := tw.WriteHeader(header); err != nil {
-		return fmt.Errorf("WriteHeader: %s", err)
+		return 0, fmt.Errorf("WriteHeader: %s", err)
 	}
 
 	// return on non-regular files, no other data to copy into the tarball
 	if !file.stat.Mode().IsRegular() {
-		return nil
+		return 0, nil
 	}
 
 	f, err := os.Open(path.Join(file.baseDir, file.relativePath))
 	if err != nil {
-		return fmt.Errorf("cant open file: %s", err)
+		return 0, fmt.Errorf("cant open file: %s", err)
 	}
 	defer closer(f)
 
 	// copy the file data to the tarball
-	if _, err := io.Copy(tw, f); err != nil {
-		return fmt.Errorf("can't copy file data into tarball: %s", err)
+	n, err := io.Copy(tw, f)
+	if err != nil {
+		return n, fmt.Errorf("can't copy file data into tarball: %s", err)
 	}
-
-	return nil
+	return n, nil
 }
