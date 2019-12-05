@@ -44,5 +44,5 @@ func (l CliLogger) Debugf(format string, a ...interface{}) {
 		format += "\n"
 	}
 
-	_, _ = fmt.Fprintf(os.Stdout, "    "+format, a...)
+	_, _ = fmt.Fprintf(os.Stdout, "  ] "+format, a...)
 }

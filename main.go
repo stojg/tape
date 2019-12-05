@@ -93,8 +93,8 @@ func realMain(title string, verbose bool) error {
 		return err
 	}
 
-	app.Infof("\n[=] deployment successful! 🍺")
-	app.Infof("    %s\n", time.Since(startTime))
+	app.Infof("\n[+] deployment successful! 🍺")
+	app.Debugf("Total time: %s\n", time.Since(startTime))
 	return nil
 }
 
@@ -252,7 +252,7 @@ func waitForDeployResult(app application, d *ssp.Deployment) (*ssp.Deployment, e
 		select {
 		// need to output something so that CodeShip doesn't cancel the build due to no output
 		case <-progressTick.C:
-			app.Infof("[-] deployment currently in state '%s'\n", d.State)
+			app.Infof("deployment currently in state '%s'\n", d.State)
 
 		case <-checkTick.C:
 			d, err = client.GetDeployment(d.Stack.ID, d.Environment.ID, fmt.Sprintf("%d", d.ID))
@@ -262,7 +262,7 @@ func waitForDeployResult(app application, d *ssp.Deployment) (*ssp.Deployment, e
 
 			if d.State != state {
 				// only display state changes
-				app.Infof("[-] deployment currently in state '%s'\n", d.State)
+				app.Infof("deployment currently in state '%s'\n", d.State)
 				state = d.State
 			}
 
@@ -274,7 +274,7 @@ func waitForDeployResult(app application, d *ssp.Deployment) (*ssp.Deployment, e
 			}
 
 		case <-cancelTick.C:
-			return d, fmt.Errorf("waiting for deployment to finish timed out, check logs at %s\n", deployURL)
+			return d, fmt.Errorf("cant be bothered to check anymore, check logs at %s\n", deployURL)
 		}
 	}
 }
